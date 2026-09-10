@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Music Online</title>
+  <!-- Importación de Tone.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; user-select: none; }
+    body { background-color: #1e1e24; color: #e0e0e0; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+    
+    /* Top Bar / Transport Controls */
+    header { background-color: #2b2b36; padding: 10px 15px; display: flex; align-items: center; gap: 12px; border-bottom: 2px solid #3f3f52; flex-wrap: wrap; z-index: 30; }
+    .control-group { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    button, select, input { background: #3a3a4c; color: #fff; border: 1px solid #55556a; padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 13px; }
+    button:hover, select:hover { background: #4a4a60; }
+    button.active { background: #007acc; border-color: #0099ff; }
+    button.btn-danger { background: #a72828; border-color: #ce3434; }
+    button.btn-danger:hover { background: #c03030; }
+    .track-selector button.active-main { background: #28a745; border-color: #34ce57; }
+    .track-selector button.active-base { background: #ff9800; border-color: #ffb74d; }
+    .divider { width: 1px; height: 24px; background: #555; margin: 0 4px; }
+
+    /* Main Layout */
+    .editor-container { display: flex; flex: 1; overflow: hidden; position: relative; }
+    
+    /* Piano Keys Side Bar */
+    .piano-sidebar { width: 90px; min-width: 90px; background: #18181d; border-right: 2px solid #3f3f52; display: flex; flex-direction: column; margin-top: 30px; z-index: 15; }
+    .key { height: 24px; border-bottom: 1px solid #2a2a35; display: flex; align-items: center; justify-content: flex-end; padding-right: 6px; font-size: 10px; font-weight: bold; cursor: pointer; }
+    .key.white { background: #d0d0d0; color: #111; }
+    .key.black { background: #222; color: #eee; }
+    .key:active, .key.playing { background: #ffcc00 !important; color: #000; }
+    
+    /* Grid Workspace */
+    .grid-workspace { flex: 1; display: flex; flex-direction: column; overflow: auto; position: relative; }
+    
+    /* Ruler / Timeline Header */
+    .timeline-ruler { height: 30px; background: #252530; border-bottom: 1px solid #3f3f52; position: sticky; top: 0; z-index: 10; cursor: pointer; }
+    .playhead { position: absolute; top: 0; bottom: 0; width: 2px; background: #ff5555; z-index: 20; pointer-events: none; }
+    .playhead-head { position: absolute; top: 0; left: -5px; width: 12px; height: 12px; background: #ff5555; clip-path: polygon(0 0, 100% 0, 50% 100%); }
+    
+    /* Grid Canvas / Board */
+    .grid-board { position: relative; background-size: 32px 24px; background-image: linear-gradient(to right, #2a2a38 1px, transparent 1px), linear-gradient(to bottom, #2a2a38 1px, transparent 1px); }
+    
+    /* Note Elements */
+    .note { position: absolute; height: 22px; border-radius: 3px; font-size: 10px; display: flex; align-items: center; padding-left: 4px; color: #fff; cursor: move; box-shadow: inset 0 0 0 1px rgba(255,255,255,0.3); overflow: hidden; white-space: nowrap; }
+    .note.track-main { background-color: #28a745; }
+    .note.track-base { background-color: #ff9800; }
+    .note.selected { outline: 2px solid #ffffff; z-index: 5; }
+    .note-resize-handle { position: absolute; right: 0; top: 0; bottom: 0; width: 6px; cursor: e-resize; background: rgba(0,0,0,0.3); }
+
+    /* Responsive Adaptation */
+    @media (max-width: 768px) {
+      header { flex-direction: column; align-items: stretch; gap: 8px; overflow-y: auto; max-height: 40vh; }
+      .piano-sidebar { width: 65px; min-width: 65px; }
+      .key { font-size: 8px; padding-right: 2px; }
+      .divider { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="control-group">
+      <button id="btn-play">▶ Reproducir</button>
+      <button id="btn-stop">⏹ Detener</button>
+      <div class="track-selector">
+        <button id="btn-track-main" class="active-main">Principal</button>
+        <button id="btn-track-base">Base (Bucle)</button>
+      </div>
+      <button id="btn-clear-track" class="btn-danger">🗑 Limpiar Pista</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="control-group">
+      <label>Inst. Global:</label>
+      <select id="select-instrument">
+        <optgroup label="Teclados y Pianos">
+          <option value="piano">Piano Soft</option>
+          <option value="piano-grand">Piano de Cola (Brillante)</option>
+          <option value="electric-piano">Piano Eléctrico (Rhodes)</option>
+        </optgroup>
+        <optgroup label="Cuerdas y Guitarras">
+          <option value="pluck">Cuerda / Pluck</option>
+          <option value="guitar-clean">Guitarra Acústica</option>
+          <option value="guitar-distort">Guitarra Eléctrica</option>
+        </optgroup>
+        <optgroup label="Vientos y Órganos">
+          <option value="flute">Flauta</option>
+          <option value="organ">Órgano</option>
+        </optgroup>
+        <optgroup label="Sintetizadores y Retro">
+          <option value="synth">Sintetizador Limpio</option>
+          <option value="bass">Bajo Profundo</option>
+          <option value="lead">Lead Claro</option>
+          <option value="8bit">Retro 8-Bit (Chiptune)</option>
+          <option value="bell">Campana FM</option>
+        </optgroup>
+        <optgroup label="Baterías y Percusión">
+          <option value="drum-kick">Batería: Bombo (Kick)</option>
+          <option value="drum-snare">Batería: Caja (Snare)</option>
+          <option value="drum-hihat">Batería: Platillo (Hi-Hat)</option>
+        </optgroup>
+      </select>
+
+      <label>Octava:</label>
+      <button id="btn-octave-down">-</button>
+      <span id="lbl-octave">4</span>
+      <button id="btn-octave-up">+</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="control-group">
+      <label>Nota:</label>
+      <select id="select-note-inst" disabled>
+        <option value="global">Modo Global</option>
+        <option value="piano">Piano Soft</option>
+        <option value="piano-grand">Piano de Cola</option>
+        <option value="electric-piano">Piano Eléctrico</option>
+        <option value="pluck">Cuerda / Pluck</option>
+        <option value="guitar-clean">Guitarra Acústica</option>
+        <option value="guitar-distort">Guitarra Eléctrica</option>
+        <option value="flute">Flauta</option>
+        <option value="organ">Órgano</option>
+        <option value="synth">Sintetizador</option>
+        <option value="bass">Bajo</option>
+        <option value="lead">Lead</option>
+        <option value="8bit">8-Bit</option>
+        <option value="bell">Campana</option>
+        <option value="drum-kick">Batería: Bombo</option>
+        <option value="drum-snare">Batería: Caja</option>
+        <option value="drum-hihat">Batería: Platillo</option>
+      </select>
+      <select id="select-note-octave" disabled>
+        <option value="0">Octava Orig.</option>
+        <option value="-1">-1 Octava</option>
+        <option value="1">+1 Octava</option>
+      </select>
+      <button id="btn-delete-note" disabled>Borrar</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="control-group">
+      <button id="btn-export-audio">💾 Exportar WAV</button>
+      <button id="btn-export-json">📄 Exportar Proyecto</button>
+      <button id="btn-import-json">📂 Cargar Proyecto</button>
+      <input type="file" id="input-file" accept=".json" style="display: none;">
+    </div>
+  </header>
+
+  <div class="editor-container">
+    <div class="piano-sidebar" id="piano-sidebar"></div>
+    
+    <div class="grid-workspace" id="grid-workspace">
+      <div class="timeline-ruler" id="ruler">
+        <div class="playhead" id="playhead"><div class="playhead-head"></div></div>
+      </div>
+      <div class="grid-board" id="grid-board"></div>
+    </div>
+  </div>
+
+  <script>
+    // --- Configuración Global ---
+    const CELL_WIDTH = 32;
+    const CELL_HEIGHT = 24;
+    const NOTES_PITCH = ['B', 'A#', 'A', 'G#', 'G', 'F#', 'F', 'E', 'D#', 'D', 'C#', 'C'];
+    const TOTAL_OCTAVES = 2;
+    const VALID_INSTRUMENTS = [
+      'piano', 'piano-grand', 'electric-piano',
+      'pluck', 'guitar-clean', 'guitar-distort',
+      'flute', 'organ',
+      'synth', 'bass', 'lead', '8bit', 'bell',
+      'drum-kick', 'drum-snare', 'drum-hihat'
+    ];
+    
+    let currentBaseOctave = 4;
+    let activeTrack = 'main';
+    let notes = [];
+    let selectedNoteId = null;
+    let isPlaying = false;
+    let playheadCol = 0;
+    let playbackInterval = null;
+    let baseLoopLength = 0;
+    let basePlayheadCol = 0;
+
+    // --- Instanciación de Instrumentos con Tone.js ---
+    const synths = {
+      'piano': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.8, sustain: 0, release: 0.1 } }).toDestination(),
+      'piano-grand': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sawtooth' }, envelope: { attack: 0.005, decay: 1.2, sustain: 0.1, release: 0.2 } }).toDestination(),
+      'electric-piano': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sine' }, envelope: { attack: 0.01, decay: 1.0, sustain: 0.2, release: 0.3 } }).toDestination(),
+      'pluck': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sawtooth' }, envelope: { attack: 0.001, decay: 0.3, sustain: 0, release: 0.1 } }).toDestination(),
+      'guitar-clean': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' }, envelope: { attack: 0.005, decay: 0.5, sustain: 0.1, release: 0.2 } }).toDestination(),
+      'guitar-distort': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'square' }, envelope: { attack: 0.01, decay: 0.4, sustain: 0.6, release: 0.2 } }).toDestination(),
+      'flute': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'triangle' }, envelope: { attack: 0.08, decay: 0.2, sustain: 0.8, release: 0.2 } }).toDestination(),
+      'organ': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sine' }, envelope: { attack: 0.02, decay: 0.1, sustain: 0.9, release: 0.2 } }).toDestination(),
+      'synth': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sine' }, envelope: { attack: 0.01, decay: 0.3, sustain: 0.5, release: 0.2 } }).toDestination(),
+      'bass': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'sawtooth' }, envelope: { attack: 0.01, decay: 0.4, sustain: 0.2, release: 0.2 } }).toDestination(),
+      'lead': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'square' }, envelope: { attack: 0.005, decay: 0.2, sustain: 0.7, release: 0.2 } }).toDestination(),
+      '8bit': new Tone.PolySynth(Tone.Synth, { oscillator: { type: 'square' }, envelope: { attack: 0.001, decay: 0.1, sustain: 0.8, release: 0.05 } }).toDestination(),
+      'bell': new Tone.PolySynth(Tone.AMSynth, { harmonicity: 2.5, envelope: { attack: 0.001, decay: 1.5, sustain: 0, release: 0.2 } }).toDestination(),
+      'drum-kick': new Tone.MembraneSynth({ pitchDecay: 0.05, octaves: 8, oscillator: { type: 'sine' } }).toDestination(),
+      'drum-snare': new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.2, sustain: 0 } }).toDestination(),
+      'drum-hihat': new Tone.MetalSynth({ frequency: 200, envelope: { attack: 0.001, decay: 0.05, release: 0.05 }, harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5 }).toDestination()
+    };
+
+    // Referencias DOM
+    const gridBoard = document.getElementById('grid-board');
+    const pianoSidebar = document.getElementById('piano-sidebar');
+    const ruler = document.getElementById('ruler');
+    const playhead = document.getElementById('playhead');
+    const btnPlay = document.getElementById('btn-play');
+    const btnStop = document.getElementById('btn-stop');
+    const btnTrackMain = document.getElementById('btn-track-main');
+    const btnTrackBase = document.getElementById('btn-track-base');
+    const btnClearTrack = document.getElementById('btn-clear-track');
+    const selectInstrument = document.getElementById('select-instrument');
+    const selectNoteInst = document.getElementById('select-note-inst');
+    const selectNoteOctave = document.getElementById('select-note-octave');
+    const btnDeleteNote = document.getElementById('btn-delete-note');
+    const btnExportAudio = document.getElementById('btn-export-audio');
+    const btnExportJson = document.getElementById('btn-export-json');
+    const btnImportJson = document.getElementById('btn-import-json');
+    const inputFile = document.getElementById('input-file');
+
+    function initGrid() {
+      gridBoard.style.height = `${TOTAL_OCTAVES * 12 * CELL_HEIGHT}px`;
+      gridBoard.style.width = `${128 * CELL_WIDTH}px`;
+      ruler.style.width = gridBoard.style.width;
+
+      pianoSidebar.innerHTML = '';
+      for (let o = TOTAL_OCTAVES - 1; o >= 0; o--) {
+        NOTES_PITCH.forEach((noteName, idx) => {
+          const key = document.createElement('div');
+          const isBlack = noteName.includes('#');
+          key.className = `key ${isBlack ? 'black' : 'white'}`;
+          key.innerText = `${noteName}${currentBaseOctave + o}`;
+          
+          key.addEventListener('mousedown', async () => {
+            await Tone.start();
+            playPitch((o * 12) + (11 - idx), selectInstrument.value, 0.4);
+            key.classList.add('playing');
+          });
+          key.addEventListener('mouseup', () => key.classList.remove('playing'));
+          key.addEventListener('mouseleave', () => key.classList.remove('playing'));
+
+          pianoSidebar.appendChild(key);
+        });
+      }
+    }
+
+    function getNoteName(pitchIndex, octaveOffset = 0) {
+      const noteIdx = pitchIndex % 12;
+      const octaveShift = Math.floor(pitchIndex / 12);
+      const noteName = NOTES_PITCH[11 - noteIdx];
+      const octave = currentBaseOctave + octaveShift + octaveOffset;
+      return `${noteName}${octave}`;
+    }
+
+    // --- Motor de Síntesis Adaptado a Tone.js ---
+    function triggerNoteSynth(pitchIndex, waveType, durationSec, octaveOffset = 0, time) {
+      const type = waveType === 'global' ? selectInstrument.value : waveType;
+      const noteName = getNoteName(pitchIndex, octaveOffset);
+
+      // Percusión / Baterías
+      if (type.startsWith('drum-')) {
+        if (type === 'drum-kick') {
+          synths['drum-kick'].triggerAttackRelease('C1', '8n', time);
+        } else if (type === 'drum-snare') {
+          synths['drum-snare'].triggerAttackRelease('8n', time);
+        } else if (type === 'drum-hihat') {
+          synths['drum-hihat'].triggerAttackRelease('16n', time);
+        }
+        return;
+      }
+
+      // Instrumentos Melódicos
+      const synth = synths[type] || synths['synth'];
+      synth.triggerAttackRelease(noteName, durationSec, time);
+    }
+
+    async function playPitch(pitchIndex, waveType = 'piano', durationSec = 0.3, octaveOffset = 0) {
+      await Tone.start();
+      triggerNoteSynth(pitchIndex, waveType, durationSec, octaveOffset);
+    }
+
+    // --- Renderizado y Manipulación de Notas ---
+    function renderNotes() {
+      gridBoard.innerHTML = '';
+      let maxBaseCol = 0;
+
+      notes.forEach(note => {
+        if (note.track === 'base') {
+          const endCol = note.startCol + note.durationCols;
+          if (endCol > maxBaseCol) maxBaseCol = endCol;
+        }
+
+        const noteEl = document.createElement('div');
+        noteEl.className = `note track-${note.track} ${note.id === selectedNoteId ? 'selected' : ''}`;
+        noteEl.style.left = `${note.startCol * CELL_WIDTH}px`;
+        noteEl.style.top = `${((TOTAL_OCTAVES * 12 - 1) - note.pitchIndex) * CELL_HEIGHT}px`;
+        noteEl.style.width = `${note.durationCols * CELL_WIDTH - 2}px`;
+        noteEl.innerText = `${note.track === 'base' ? 'B:' : ''}${note.instrument !== 'global' ? note.instrument : ''}`;
+
+        // Selección y Arrastre
+        noteEl.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
+          selectNote(note.id);
+          playPitch(note.pitchIndex, note.instrument, 0.3, note.octaveOffset);
+
+          if (e.target.classList.contains('note-resize-handle')) return;
+
+          let startX = e.clientX;
+          let startY = e.clientY;
+          let origCol = note.startCol;
+          let origPitch = note.pitchIndex;
+
+          function onMouseMove(me) {
+            const deltaCols = Math.round((me.clientX - startX) / CELL_WIDTH);
+            const deltaPitch = Math.round((startY - me.clientY) / CELL_HEIGHT);
+            note.startCol = Math.max(0, origCol + deltaCols);
+            note.pitchIndex = Math.max(0, Math.min(TOTAL_OCTAVES * 12 - 1, origPitch + deltaPitch));
+            renderNotes();
+          }
+
+          function onMouseUp() {
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+          }
+
+          window.addEventListener('mousemove', onMouseMove);
+          window.addEventListener('mouseup', onMouseUp);
+        });
+
+        // Borrado con Doble Clic
+        noteEl.addEventListener('dblclick', (e) => {
+          e.stopPropagation();
+          notes = notes.filter(n => n.id !== note.id);
+          if (selectedNoteId === note.id) selectNote(null);
+          renderNotes();
+        });
+
+        // Redimensión de Duración
+        const resizeHandle = document.createElement('div');
+        resizeHandle.className = 'note-resize-handle';
+        resizeHandle.addEventListener('mousedown', (e) => {
+          e.stopPropagation();
+          let startX = e.clientX;
+          let origDuration = note.durationCols;
+
+          function onMouseMove(me) {
+            const deltaCols = Math.round((me.clientX - startX) / CELL_WIDTH);
+            note.durationCols = Math.max(1, origDuration + deltaCols);
+            renderNotes();
+          }
+
+          function onMouseUp() {
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+          }
+
+          window.addEventListener('mousemove', onMouseMove);
+          window.addEventListener('mouseup', onMouseUp);
+        });
+
+        noteEl.appendChild(resizeHandle);
+        gridBoard.appendChild(noteEl);
+      });
+
+      baseLoopLength = maxBaseCol;
+    }
+
+    // Insertar Nota en Clic de la Cuadrícula
+    gridBoard.addEventListener('click', async (e) => {
+      await Tone.start();
+      const rect = gridBoard.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      const startCol = Math.floor(clickX / CELL_WIDTH);
+      const row = Math.floor(clickY / CELL_HEIGHT);
+      const pitchIndex = (TOTAL_OCTAVES * 12 - 1) - row;
+
+      const newNote = {
+        id: Date.now() + Math.random(),
+        pitchIndex,
+        startCol,
+        durationCols: 2,
+        track: activeTrack,
+        instrument: 'global',
+        octaveOffset: 0
+      };
+
+      notes.push(newNote);
+      selectNote(newNote.id);
+      playPitch(newNote.pitchIndex, newNote.instrument, 0.3, newNote.octaveOffset);
+      renderNotes();
+    });
+
+    function selectNote(id) {
+      selectedNoteId = id;
+      const note = notes.find(n => n.id === id);
+      if (note) {
+        selectNoteInst.disabled = false;
+        selectNoteOctave.disabled = false;
+        btnDeleteNote.disabled = false;
+        selectNoteInst.value = note.instrument;
+        selectNoteOctave.value = note.octaveOffset.toString();
+      } else {
+        selectNoteInst.disabled = true;
+        selectNoteOctave.disabled = true;
+        btnDeleteNote.disabled = true;
+      }
+      renderNotes();
+    }
+
+    selectNoteInst.addEventListener('change', (e) => {
+      const note = notes.find(n => n.id === selectedNoteId);
+      if (note) { note.instrument = e.target.value; renderNotes(); }
+    });
+
+    selectNoteOctave.addEventListener('change', (e) => {
+      const note = notes.find(n => n.id === selectedNoteId);
+      if (note) { note.octaveOffset = parseInt(e.target.value); renderNotes(); }
+    });
+
+    btnDeleteNote.addEventListener('click', () => {
+      if (selectedNoteId) {
+        notes = notes.filter(n => n.id !== selectedNoteId);
+        selectNote(null);
+      }
+    });
+
+    // --- Limpieza de Pista Actual ---
+    btnClearTrack.addEventListener('click', () => {
+      if (confirm(`¿Seguro que deseas limpiar la pista ${activeTrack === 'main' ? 'Principal' : 'Base'}?`)) {
+        notes = notes.filter(n => n.track !== activeTrack);
+        selectNote(null);
+        renderNotes();
+      }
+    });
+
+    // --- Control de Reproducción ---
+    function getMaxMainCol() {
+      let maxCol = 0;
+      notes.filter(n => n.track === 'main').forEach(n => {
+        const end = n.startCol + n.durationCols;
+        if (end > maxCol) maxCol = end;
+      });
+      return maxCol;
+    }
+
+    function stepPlayback() {
+      const maxMainCol = getMaxMainCol();
+
+      if (maxMainCol > 0 && playheadCol >= maxMainCol) {
+        btnStop.click();
+        return;
+      }
+
+      notes.filter(n => n.track === 'main' && n.startCol === playheadCol).forEach(n => {
+        triggerNoteSynth(n.pitchIndex, n.instrument, n.durationCols * 0.2, n.octaveOffset);
+      });
+
+      if (baseLoopLength > 0) {
+        notes.filter(n => n.track === 'base' && n.startCol === basePlayheadCol).forEach(n => {
+          triggerNoteSynth(n.pitchIndex, n.instrument, n.durationCols * 0.2, n.octaveOffset);
+        });
+
+        basePlayheadCol++;
+        if (basePlayheadCol >= baseLoopLength) basePlayheadCol = 0;
+      }
+
+      playheadCol++;
+      playhead.style.left = `${playheadCol * CELL_WIDTH}px`;
+    }
+
+    btnPlay.addEventListener('click', async () => {
+      if (isPlaying) return;
+      await Tone.start();
+      isPlaying = true;
+      btnPlay.classList.add('active');
+      playbackInterval = setInterval(stepPlayback, 200);
+    });
+
+    btnStop.addEventListener('click', () => {
+      isPlaying = false;
+      btnPlay.classList.remove('active');
+      clearInterval(playbackInterval);
+      playheadCol = 0;
+      basePlayheadCol = 0;
+      playhead.style.left = '0px';
+    });
+
+    ruler.addEventListener('click', (e) => {
+      const rect = ruler.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      playheadCol = Math.floor(clickX / CELL_WIDTH);
+      basePlayheadCol = baseLoopLength > 0 ? playheadCol % baseLoopLength : 0;
+      playhead.style.left = `${playheadCol * CELL_WIDTH}px`;
+    });
+
+    // --- Exportar a WAV con Tone.Offline ---
+    btnExportAudio.addEventListener('click', async () => {
+      const maxCol = getMaxMainCol();
+      if (maxCol === 0) return alert('No hay notas en la línea de tiempo principal para exportar.');
+
+      const stepDuration = 0.2;
+      const totalDuration = maxCol * stepDuration + 1;
+
+      const buffer = await Tone.Offline(async ({ transport }) => {
+        // Recrear una instancia temporal para la renderización sin conexión
+        const offlinePoly = new Tone.PolySynth(Tone.Synth).toDestination();
+        const offlineKick = new Tone.MembraneSynth().toDestination();
+        const offlineSnare = new Tone.NoiseSynth().toDestination();
+        const offlineHihat = new Tone.MetalSynth({ frequency: 200, envelope: { attack: 0.001, decay: 0.05, release: 0.05 }, harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5 }).toDestination();
+
+        notes.forEach(note => {
+          let startTime = note.startCol * stepDuration;
+          let noteDuration = note.durationCols * stepDuration;
+          const inst = note.instrument === 'global' ? selectInstrument.value : note.instrument;
+
+          const renderNoteAtTime = (timeAt) => {
+            if (inst === 'drum-kick') {
+              offlineKick.triggerAttackRelease('C1', '8n', timeAt);
+            } else if (inst === 'drum-snare') {
+              offlineSnare.triggerAttackRelease('8n', timeAt);
+            } else if (inst === 'drum-hihat') {
+              offlineHihat.triggerAttackRelease('16n', timeAt);
+            } else {
+              offlinePoly.triggerAttackRelease(getNoteName(note.pitchIndex, note.octaveOffset), noteDuration, timeAt);
+            }
+          };
+
+          if (note.track === 'main') {
+            renderNoteAtTime(startTime);
+          } else if (note.track === 'base' && baseLoopLength > 0) {
+            let loopTime = note.startCol * stepDuration;
+            const loopDuration = baseLoopLength * stepDuration;
+            while (loopTime < totalDuration) {
+              renderNoteAtTime(loopTime);
+              loopTime += loopDuration;
+            }
+          }
+        });
+      }, totalDuration);
+
+      const wavBlob = bufferToWave(buffer.get(), buffer.length);
+      const url = URL.createObjectURL(wavBlob);
+      
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'cancion_lmms.wav';
+      a.click();
+    });
+
+    function bufferToWave(abuffer, len) {
+      let numOfChan = abuffer.numberOfChannels,
+          length = len * numOfChan * 2 + 44,
+          buffer = new ArrayBuffer(length),
+          view = new DataView(buffer),
+          channels = [], i, sample,
+          offset = 0, pos = 0;
+
+      function setUint16(data) { view.setUint16(pos, data, true); pos += 2; }
+      function setUint32(data) { view.setUint32(pos, data, true); pos += 4; }
+
+      setUint32(0x46464952); setUint32(length - 8); setUint32(0x45564157);
+      setUint32(0x20746d66); setUint32(16); setUint16(1); setUint16(numOfChan);
+      setUint32(abuffer.sampleRate); setUint32(abuffer.sampleRate * 2 * numOfChan);
+      setUint16(numOfChan * 2); setUint16(16); setUint32(0x61746164); setUint32(length - pos - 4);
+
+      for (i = 0; i < abuffer.numberOfChannels; i++) channels.push(abuffer.getChannelData(i));
+
+      while (offset < len) {
+        for (i = 0; i < numOfChan; i++) {
+          sample = Math.max(-1, Math.min(1, channels[i][offset]));
+          sample = (0.5 + sample < 0 ? sample * 32768 : sample * 32767) | 0;
+          view.setInt16(pos, sample, true); pos += 2;
+        }
+        offset++;
+      }
+      return new Blob([buffer], { type: "audio/wav" });
+    }
+
+    // --- Exportación e Importación Sanitizada de Proyecto JSON ---
+    btnExportJson.addEventListener('click', () => {
+      const projectData = {
+        version: "1.0",
+        currentBaseOctave,
+        notes: notes.map(n => ({
+          pitchIndex: n.pitchIndex,
+          startCol: n.startCol,
+          durationCols: n.durationCols,
+          track: n.track,
+          instrument: n.instrument,
+          octaveOffset: n.octaveOffset
+        }))
+      };
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(projectData));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", "proyecto_lmms.json");
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    });
+
+    btnImportJson.addEventListener('click', () => inputFile.click());
+
+    function validateAndSanitizeProject(parsedData) {
+      if (typeof parsedData !== 'object' || parsedData === null || Array.isArray(parsedData)) {
+        throw new Error('Formato de proyecto inválido.');
+      }
+
+      const sanitizedOctave = Number.isInteger(parsedData.currentBaseOctave) &&
+        parsedData.currentBaseOctave >= 1 && parsedData.currentBaseOctave <= 8
+        ? parsedData.currentBaseOctave : 4;
+
+      if (!Array.isArray(parsedData.notes)) {
+        throw new Error('La estructura de notas no es válida.');
+      }
+
+      if (parsedData.notes.length > 2000) {
+        throw new Error('El archivo excede el límite máximo de 2000 notas.');
+      }
+
+      const sanitizedNotes = [];
+      for (const note of parsedData.notes) {
+        if (typeof note !== 'object' || note === null) continue;
+
+        const pitchIndex = Number.isInteger(note.pitchIndex) ? Math.max(0, Math.min(TOTAL_OCTAVES * 12 - 1, note.pitchIndex)) : 0;
+        const startCol = Number.isInteger(note.startCol) ? Math.max(0, Math.min(512, note.startCol)) : 0;
+        const durationCols = Number.isInteger(note.durationCols) ? Math.max(1, Math.min(64, note.durationCols)) : 2;
+        const track = (note.track === 'base' || note.track === 'main') ? note.track : 'main';
+        const instrument = (note.instrument === 'global' || VALID_INSTRUMENTS.includes(note.instrument)) ? note.instrument : 'global';
+        const octaveOffset = Number.isInteger(note.octaveOffset) ? Math.max(-2, Math.min(2, note.octaveOffset)) : 0;
+
+        sanitizedNotes.push({
+          id: Date.now() + Math.random(),
+          pitchIndex,
+          startCol,
+          durationCols,
+          track,
+          instrument,
+          octaveOffset
+        });
+      }
+
+      return {
+        currentBaseOctave: sanitizedOctave,
+        notes: sanitizedNotes
+      };
+    }
+
+    inputFile.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      if (file.size > 2 * 1024 * 1024) {
+        alert('El archivo es demasiado grande para ser un proyecto válido.');
+        inputFile.value = '';
+        return;
+      }
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const rawParsed = JSON.parse(event.target.result);
+          const cleanProject = validateAndSanitizeProject(rawParsed);
+
+          notes = cleanProject.notes;
+          currentBaseOctave = cleanProject.currentBaseOctave;
+          document.getElementById('lbl-octave').innerText = currentBaseOctave;
+          
+          initGrid();
+          renderNotes();
+        //   alert('¡Proyecto cargado con éxito!');
+        } catch (err) {
+          alert('Error de seguridad al cargar archivo: ' + err.message);
+        } finally {
+          inputFile.value = '';
+        }
+      };
+      reader.readAsText(file);
+    });
+
+    // --- Controles de Interfaz ---
+    btnTrackMain.addEventListener('click', () => {
+      activeTrack = 'main';
+      btnTrackMain.classList.add('active-main');
+      btnTrackBase.classList.remove('active-base');
+    });
+
+    btnTrackBase.addEventListener('click', () => {
+      activeTrack = 'base';
+      btnTrackBase.classList.add('active-base');
+      btnTrackMain.classList.remove('active-main');
+    });
+
+    document.getElementById('btn-octave-up').addEventListener('click', () => {
+      currentBaseOctave++;
+      document.getElementById('lbl-octave').innerText = currentBaseOctave;
+      initGrid();
+    });
+
+    document.getElementById('btn-octave-down').addEventListener('click', () => {
+      if (currentBaseOctave > 1) {
+        currentBaseOctave--;
+        document.getElementById('lbl-octave').innerText = currentBaseOctave;
+        initGrid();
+      }
+    });
+
+    initGrid();
+  </script>
+</body>
+</html>
