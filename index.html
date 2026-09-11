@@ -577,7 +577,7 @@
         
         const a = document.createElement('a');
         a.href = url;
-        a.download = 'cancion_lmms.wav';
+        a.download = 'music.wav';
         a.click();
         URL.revokeObjectURL(url);
 
@@ -633,7 +633,7 @@
       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(projectData));
       const downloadAnchor = document.createElement('a');
       downloadAnchor.setAttribute("href", dataStr);
-      downloadAnchor.setAttribute("download", "proyecto_lmms.json");
+      downloadAnchor.setAttribute("download", "my_project.json");
       document.body.appendChild(downloadAnchor);
       downloadAnchor.click();
       downloadAnchor.remove();
