@@ -503,7 +503,7 @@
       playhead.style.left = `${playheadCol * CELL_WIDTH}px`;
     });
 
-    // --- Exportar a WAV con Tone.Offline ---
+    // --- Exportar a WAV con Tone.Offline (Corregido) ---
     btnExportAudio.addEventListener('click', async () => {
       const maxCol = getMaxMainCol();
       if (maxCol === 0) return alert('No hay notas en la línea de tiempo principal para exportar.');
@@ -511,50 +511,80 @@
       const stepDuration = 0.2;
       const totalDuration = maxCol * stepDuration + 1;
 
-      const buffer = await Tone.Offline(async ({ transport }) => {
-        // Recrear una instancia temporal para la renderización sin conexión
-        const offlinePoly = new Tone.PolySynth(Tone.Synth).toDestination();
-        const offlineKick = new Tone.MembraneSynth().toDestination();
-        const offlineSnare = new Tone.NoiseSynth().toDestination();
-        const offlineHihat = new Tone.MetalSynth({ frequency: 200, envelope: { attack: 0.001, decay: 0.05, release: 0.05 }, harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5 }).toDestination();
+      // 1. Recopilar y ordenar todos los eventos temporalmente
+      const scheduledEvents = [];
 
-        notes.forEach(note => {
-          let startTime = note.startCol * stepDuration;
-          let noteDuration = note.durationCols * stepDuration;
-          const inst = note.instrument === 'global' ? selectInstrument.value : note.instrument;
+      notes.forEach(note => {
+        let noteDuration = note.durationCols * stepDuration;
+        const inst = note.instrument === 'global' ? selectInstrument.value : note.instrument;
 
-          const renderNoteAtTime = (timeAt) => {
-            if (inst === 'drum-kick') {
-              offlineKick.triggerAttackRelease('C1', '8n', timeAt);
-            } else if (inst === 'drum-snare') {
-              offlineSnare.triggerAttackRelease('8n', timeAt);
-            } else if (inst === 'drum-hihat') {
-              offlineHihat.triggerAttackRelease('16n', timeAt);
-            } else {
-              offlinePoly.triggerAttackRelease(getNoteName(note.pitchIndex, note.octaveOffset), noteDuration, timeAt);
-            }
-          };
-
-          if (note.track === 'main') {
-            renderNoteAtTime(startTime);
-          } else if (note.track === 'base' && baseLoopLength > 0) {
-            let loopTime = note.startCol * stepDuration;
-            const loopDuration = baseLoopLength * stepDuration;
-            while (loopTime < totalDuration) {
-              renderNoteAtTime(loopTime);
-              loopTime += loopDuration;
-            }
+        if (note.track === 'main') {
+          scheduledEvents.push({
+            time: note.startCol * stepDuration,
+            duration: noteDuration,
+            pitchIndex: note.pitchIndex,
+            octaveOffset: note.octaveOffset,
+            inst
+          });
+        } else if (note.track === 'base' && baseLoopLength > 0) {
+          let loopTime = note.startCol * stepDuration;
+          const loopDuration = baseLoopLength * stepDuration;
+          while (loopTime < totalDuration) {
+            scheduledEvents.push({
+              time: loopTime,
+              duration: noteDuration,
+              pitchIndex: note.pitchIndex,
+              octaveOffset: note.octaveOffset,
+              inst
+            });
+            loopTime += loopDuration;
           }
-        });
-      }, totalDuration);
+        }
+      });
 
-      const wavBlob = bufferToWave(buffer.get(), buffer.length);
-      const url = URL.createObjectURL(wavBlob);
-      
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'cancion_lmms.wav';
-      a.click();
+      // 2. ORDENAR estrictamente los eventos por tiempo de inicio (Obligatorio para Tone.Offline)
+      scheduledEvents.sort((a, b) => a.time - b.time);
+
+      try {
+        const buffer = await Tone.Offline(async () => {
+          // Instancias polifónicas aisladas para el renderizado offline
+          const offlinePoly = new Tone.PolySynth(Tone.Synth).toDestination();
+
+          scheduledEvents.forEach(evt => {
+            const safeTime = evt.time; 
+
+            if (evt.inst === 'drum-kick') {
+              const kick = new Tone.MembraneSynth({ pitchDecay: 0.05, octaves: 8, oscillator: { type: 'sine' } }).toDestination();
+              kick.triggerAttackRelease('C1', '8n', safeTime);
+            } else if (evt.inst === 'drum-snare') {
+              const snare = new Tone.NoiseSynth({ noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.2, sustain: 0 } }).toDestination();
+              snare.triggerAttackRelease('8n', safeTime);
+            } else if (evt.inst === 'drum-hihat') {
+              const hihat = new Tone.MetalSynth({ frequency: 200, envelope: { attack: 0.001, decay: 0.05, release: 0.05 }, harmonicity: 5.1, modulationIndex: 32, resonance: 4000, octaves: 1.5 }).toDestination();
+              hihat.triggerAttackRelease('16n', safeTime);
+            } else {
+              offlinePoly.triggerAttackRelease(
+                getNoteName(evt.pitchIndex, evt.octaveOffset), 
+                evt.duration, 
+                safeTime
+              );
+            }
+          });
+        }, totalDuration);
+
+        const wavBlob = bufferToWave(buffer.get(), buffer.length);
+        const url = URL.createObjectURL(wavBlob);
+        
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'cancion_lmms.wav';
+        a.click();
+        URL.revokeObjectURL(url);
+
+      } catch (err) {
+        alert('Error al exportar el audio: ' + err.message);
+        console.error(err);
+      }
     });
 
     function bufferToWave(abuffer, len) {
